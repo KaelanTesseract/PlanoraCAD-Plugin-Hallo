@@ -1,0 +1,19 @@
+[package]
+name = "beispiel-hallo"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-only"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# wit-bindgen: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
+wit-bindgen = { version = "0.63", default-features = false, features = ["macros", "realloc"] }
+
+[profile.release]
+opt-level = "s"
+strip = true
+lto = true
+codegen-units = 1
