@@ -1,4 +1,4 @@
-package planora:plugin@0.1.0;
+package planora:plugin@0.2.0;
 
 interface types {
   type request-id = u64;
@@ -7,31 +7,123 @@ interface types {
   record command { id: string, label-key: string, icon: option<string>, shortcut: option<string> }
   record registration { commands: list<command> }
   record host-info { api-version: string, program-version: string, language: string }
-  variant field-kind { label, text(string), number(f64), toggle(bool) }
+
+  // Dialogbausteine (0.2). Zahlen in mm bzw. Grad, dazu der Formeltext.
+  enum unit { none, length, angle }
+  record number-field { value: f64, unit: unit, formula: string }
+  record option-item { id: string, label-key: string }
+  record column { id: string, label-key: string }
+  record row { id: string, cells: list<string> }
+  enum pick-kind { sketch, profile }
+  // `group`: Titel-Schlüssel, eingeklappt, Kennungen der Felder in der Gruppe (WIT kennt keine
+  // rekursiven Typen; die Felder selbst stehen in `dialog.fields`).
+  variant field-kind {
+    label,
+    text(string),
+    number(number-field),
+    toggle(bool),
+    choice(tuple<list<option-item>, string>),
+    buttons(tuple<list<option-item>, string>),
+    table(tuple<list<column>, list<row>, option<string>>),
+    group(tuple<string, bool, list<string>>),
+    separator,
+    pick(pick-kind),
+  }
   record field { id: string, label-key: string, kind: field-kind }
   record dialog { id: string, title-key: string, fields: list<field> }
-  variant field-value { text(string), number(f64), toggle(bool) }
+  variant picked { none, sketch(u64), profile(tuple<u64, u32>) }
+  variant field-value {
+    text(string),
+    number(tuple<f64, string>),
+    toggle(bool),
+    choice(string),
+    table(option<string>),
+    picked(picked),
+  }
   variant dialog-event { changed(tuple<string, field-value>), ok(list<tuple<string, field-value>>), cancel }
+
+  // Baum (0.2): flache Liste in Anzeigereihenfolge; `parent` verweist auf einen früheren Knoten.
+  record tree-node {
+    id: string,
+    parent: option<string>,
+    label: string,
+    icon: option<string>,
+    visible: option<bool>,
+    commands: list<string>,
+  }
+  variant tree-event { select, set-visible(bool), command(string) }
+
+  // Datei-Dialog (0.2).
+  enum file-mode { open, save }
+  record file-filter { label-key: string, extensions: list<string> }
+
   record http-response { status: u16, body: list<u8> }
-  variant request-result { granted, denied, http(http-response), failed(string) }
+  variant request-result { granted, denied, http(http-response), failed(string), file(u64), cancelled }
+
+  // Dokument (0.2): der Abschnitt des Plug-ins im aktiven Dokument.
+  record section { schema: u32, bytes: list<u8> }
+  enum document-event { opened, switched, changed-by-undo, closed }
+
+  // Modell lesen (0.2): mm, Skizzenkoordinaten.
+  record placement { origin: tuple<f64, f64, f64>, x-dir: tuple<f64, f64, f64>, normal: tuple<f64, f64, f64> }
+  record sketch-info { id: u64, name: string, plane: placement }
+  // `line`: x1, y1, x2, y2; `arc`: Mitte x, y, Radius, Start- und Endwinkel (Grad), gegen den
+  // Uhrzeigersinn (`true`) oder mit ihm; `polyline` für Splines und Kegelschnitte.
+  variant segment {
+    line(tuple<f64, f64, f64, f64>),
+    arc(tuple<f64, f64, f64, f64, f64, bool>),
+    polyline(list<tuple<f64, f64>>),
+  }
+  record profile { outer: list<segment>, holes: list<list<segment>> }
 }
 interface log { use types.{level}; write: func(level: level, text: string); }
 interface i18n { text: func(key: string, args: list<tuple<string, string>>) -> string; }
 interface ui {
-  use types.{level, dialog};
+  use types.{level, dialog, file-mode, file-filter, request-id};
   message: func(level: level, text: string);
   open-dialog: func(d: dialog) -> result<_, string>;
   close-dialog: func(id: string);
+  choose-file: func(mode: file-mode, filters: list<file-filter>, suggested: string) -> request-id;
 }
 interface rights { use types.{right, request-id}; request: func(r: right) -> request-id; granted: func(r: right) -> bool; }
 interface net { use types.{request-id}; get: func(url: string) -> result<request-id, string>; }
+interface document {
+  use types.{section};
+  get: func() -> option<section>;
+  begin: func(label-key: string) -> result<_, string>;
+  set: func(s: section) -> result<_, string>;
+  remove: func() -> result<_, string>;
+  commit: func() -> result<_, string>;
+  rollback: func();
+}
+interface files {
+  read: func(h: u64) -> result<list<u8>, string>;
+  write: func(h: u64, bytes: list<u8>) -> result<_, string>;
+}
+interface folder {
+  %list: func(rel: string) -> result<list<string>, string>;
+  read: func(rel: string) -> result<list<u8>, string>;
+  write: func(rel: string, bytes: list<u8>) -> result<_, string>;
+}
+interface model {
+  use types.{sketch-info, profile};
+  sketches: func() -> result<list<sketch-info>, string>;
+  profiles: func(sketch: u64) -> result<list<profile>, string>;
+}
 
 world plugin {
   import log; import i18n; import ui; import rights; import net;
+  import document; import files; import folder; import model;
   use types.{host-info, registration, dialog-event, request-id, request-result};
+  use types.{document-event, tree-node, tree-event};
   export init: func(info: host-info) -> result<registration, string>;
   export run-command: func(id: string) -> result<_, string>;
   export handle-dialog: func(id: string, event: dialog-event) -> result<_, string>;
   export on-result: func(id: request-id, %result: request-result);
   export shutdown: func();
+  export on-document: func(e: document-event);
+  export section-upgrade: func(old-schema: u32, bytes: list<u8>) -> result<list<u8>, string>;
+  export tree: func() -> list<tree-node>;
+  export on-tree: func(node: string, e: tree-event);
+  export on-model: func(changed: list<u64>);
 }

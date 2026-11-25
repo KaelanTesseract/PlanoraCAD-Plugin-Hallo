@@ -19,7 +19,7 @@ cargo build --release --target wasm32-wasip2
 
 Zum Packen dient das Werkzeug `pack` aus dem PlanoraCAD-Repo (`crates/planora-plugin-host/examples/pack.rs`). Wie das genau geht, steht in `docs/plugins/entwickler.md` im PlanoraCAD-Repo.
 
-`wit/` ist eine Kopie der Schnittstellenbeschreibung (API 0.1) aus PlanoraCAD.
+`wit/` ist eine Kopie der Schnittstellenbeschreibung (API 0.2) aus PlanoraCAD.
 
 ## Lizenz
 
